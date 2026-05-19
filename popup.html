@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Hot Calculator</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;600&display=swap" rel="stylesheet">
+        <link rel="stylesheet" type="text/css" href="popup.css">
+        <script src="jquery-3.1.0.min.js"></script>
+        <script src="math.js"></script>
+        <script src="bigNumber.js"></script>
+        <script src="popup.js"></script>
+    </head>
+    <body>
+        <h1 class="title">Hot Calculator</h1>
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="normal">Normal</button>
+            <button class="tab-btn" data-tab="bignum">Big Number</button>
+        </div>
+        <div class="container">
+            <div class="input-row">
+                <input id="expression" type="text" placeholder="e.g. sqrt(16), ln(100), 2^(3/4)">
+                <button id="btnCalculate" type="button">=</button>
+            </div>
+            <div id="syntaxHint" class="syntax-hint">
+                sqrt(x) ln(x) log10(x) log(x,base) x^(a/b)
+            </div>
+            <div class="options-row">
+                <label>
+                    Decimal places:
+                    <select id="decimalPlaces">
+                        <option value="0">0</option>
+                        <option value="1">1</option>
+                        <option value="2" selected>2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="8">8</option>
+                        <option value="16">16</option>
+                        <option value="20">20</option>
+                    </select>
+                </label>
+            </div>
+            <div id="loadingOverlay" class="loading-overlay hidden">
+                <div class="loading-spinner"></div>
+                <span class="loading-text">Processing...</span>
+            </div>
+            <div class="result-row">
+                <p id="result" class="result-text empty">Result</p>
+                <button id="btnIsPrime" type="button" class="prime-btn" title="Check if prime">is Prime?</button>
+                <button id="btnCopy" type="button" class="copy-btn" title="Copy result">
+                    <svg class="copy-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h5"/></svg>
+                    <svg class="check-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                </button>
+            </div>
+        </div>
+    </body>
+</html>

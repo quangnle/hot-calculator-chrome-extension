@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+
+  "name": "Hot Calculator Extension",
+  "description": "This extension helps you to calculate all input strings",
+  "version": "1.0",
+  "icons": {
+    "128": "icon128.png",
+    "48": "icon48.png",
+    "16": "icon16.png"
+  },
+
+  "author": {
+    "email": "legoslight@gmail.com"
+  },
+
+  "action": {
+    "default_icon": "icon16.png",
+    "default_popup": "popup.html"
+  },
+
+  "background": {
+    "service_worker": "eventPage.js",
+    "type": "module"
+  },
+
+  "permissions": [
+    "storage",
+    "contextMenus",
+    "scripting",
+    "activeTab",
+    "tabs"
+  ]
+}

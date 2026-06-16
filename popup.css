@@ -7,7 +7,7 @@ body {
     font-family: 'Share Tech Mono', 'Consolas', monospace;
     margin: 0;
     padding: 16px;
-    min-width: 480px;
+    min-width: 560px;
     background: linear-gradient(135deg, #0a0e14 0%, #0d1117 50%, #0a0e14 100%);
     color: #00ff41;
     border: 1px solid rgba(0, 255, 65, 0.2);
@@ -115,13 +115,19 @@ body::before {
     z-index: 1;
 }
 
+.calc-panel.hidden {
+    display: none;
+}
+
 .input-row {
     display: flex;
     gap: 8px;
     margin-bottom: 12px;
 }
 
-#expression {
+#expression,
+#matrixVariables,
+#matrixExpression {
     flex: 1;
     min-width: 0;
     padding: 10px 14px;
@@ -135,17 +141,49 @@ body::before {
     transition: border-color 0.2s, box-shadow 0.2s;
 }
 
-#expression::placeholder {
+#expression::placeholder,
+#matrixVariables::placeholder,
+#matrixExpression::placeholder {
     color: rgba(0, 255, 65, 0.4);
 }
 
 
-#expression:focus {
+#expression:focus,
+#matrixVariables:focus,
+#matrixExpression:focus {
     border-color: #00ff41;
     box-shadow: 0 0 12px rgba(0, 255, 65, 0.2);
 }
 
-#btnCalculate {
+#matrixVariables,
+#matrixExpression {
+    width: 100%;
+    resize: vertical;
+    line-height: 1.5;
+}
+
+.matrix-inputs {
+    display: grid;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.matrix-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 0.8rem;
+    color: rgba(0, 255, 65, 0.9);
+}
+
+.matrix-action-row {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 12px;
+}
+
+#btnCalculate,
+#btnMatrixCalculate {
     padding: 10px 18px;
     font-family: 'Orbitron', sans-serif;
     font-size: 1rem;
@@ -159,12 +197,14 @@ body::before {
     min-width: 48px;
 }
 
-#btnCalculate:hover {
+#btnCalculate:hover,
+#btnMatrixCalculate:hover {
     background: rgba(0, 255, 65, 0.25);
     box-shadow: 0 0 15px rgba(0, 255, 65, 0.3);
 }
 
-#btnCalculate:active {
+#btnCalculate:active,
+#btnMatrixCalculate:active {
     transform: scale(0.97);
 }
 
@@ -209,7 +249,7 @@ body::before {
 
 .result-row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 12px;
     padding: 12px;
     background: rgba(0, 15, 8, 0.6);
@@ -220,15 +260,47 @@ body::before {
 .result-text {
     flex: 1;
     font-family: 'Share Tech Mono', monospace;
-    font-size: 1rem;
+    font-size: 0.95rem;
     margin: 0;
     color: #00ff41;
-    word-break: break-all;
+    min-height: 28px;
+    overflow-x: auto;
 }
 
 .result-text.empty {
     color: rgba(0, 255, 65, 0.5);
     font-style: italic;
+}
+
+.result-text .katex {
+    color: #9bffb8;
+}
+
+.result-text .katex-display {
+    margin: 0.55em 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+.result-block + .result-block {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(0, 255, 65, 0.16);
+}
+
+.result-error {
+    color: #ff6b6b;
+    white-space: pre-wrap;
+}
+
+.result-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.hidden {
+    display: none !important;
 }
 
 .prime-btn {

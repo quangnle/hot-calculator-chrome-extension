@@ -545,7 +545,21 @@ $(function(){
         }).join('');
     }
 
+    function renderSectionTitle(text) {
+        return '<div class="result-section-title">' + escapeHtml(text) + '</div>';
+    }
+
+    function renderSectionSeparator() {
+        return '<div class="result-separator">===============</div>';
+    }
+
     function buildDefinitionCopyLines(definitions, decimals) {
+        return definitions.map(function(def){
+            return def.name + ' = ' + valueToCopyText(def.value, decimals);
+        });
+    }
+
+    function buildDefinitionMarkdownLines(definitions, decimals) {
         return definitions.map(function(def){
             return def.name + ' = ' + valueToCopyText(def.value, decimals);
         });
@@ -555,6 +569,31 @@ $(function(){
         var html = renderDefinitionBlocks(definitions, decimals) + resultBlocks.join('');
         var allCopyLines = buildDefinitionCopyLines(definitions, decimals).concat(copyLines);
         setHtmlResult(html, allCopyLines.join('\n'));
+    }
+
+    function buildMarkdownSection(section, decimals) {
+        var lines = ['### ' + section.expression, '', '```text'];
+
+        lines = lines.concat(buildDefinitionMarkdownLines(section.definitions, decimals));
+        if (section.definitions.length && section.copyLines.length) {
+            lines.push('');
+        }
+        lines = lines.concat(section.copyLines);
+        lines.push('```');
+        return lines.join('\n');
+    }
+
+    function renderMatrixSections(sections, decimals) {
+        var html = sections.map(function(section, index){
+            var sectionHtml = renderSectionTitle('Expression: ' + section.expression) + renderDefinitionBlocks(section.definitions, decimals) + section.blocks.join('');
+            if (index === 0) return sectionHtml;
+            return renderSectionSeparator() + sectionHtml;
+        }).join('');
+        var markdown = sections.map(function(section){
+            return buildMarkdownSection(section, decimals);
+        }).join('\n\n===============\n\n');
+
+        setHtmlResult(html, markdown);
     }
 
     function buildStandardMatrixResult(definitions, expressionTex, result, decimals) {
@@ -906,6 +945,7 @@ $(function(){
         var rawExpr = $('#matrixExpression').val();
         var decimals = parseInt($('#decimalPlaces').val(), 10);
         var scope = {};
+        var expressionLines;
         var commandMatch;
         var definitions;
         var transformedExpr;
@@ -915,6 +955,7 @@ $(function(){
         var expressionTex;
         var resultPayload;
         var argumentInfo;
+        var sections = [];
 
         if (!rawExpr || !rawExpr.trim()) {
             setErrorResult('Error: Enter a matrix expression');
@@ -923,29 +964,44 @@ $(function(){
 
         try {
             definitions = parseMatrixAssignments(rawVars || '', scope);
-            commandMatch = getCommandMatch(rawExpr.trim());
-
-            if (commandMatch) {
-                argumentInfo = evaluateMatrixArgument(commandMatch.argument, scope);
-                referencedNames = extractReferencedVariables(argumentInfo.expr, scope);
-                resultPayload = handleMatrixCommand(commandMatch, argumentInfo, decimals);
-            } else {
-                transformedExpr = rewriteMatrixSyntax(rawExpr.trim());
-                result = math.evaluate(transformedExpr, scope);
-                expressionTex = math.parse(transformedExpr).toTex({ parenthesis: 'auto' });
-                referencedNames = extractReferencedVariables(transformedExpr, scope);
-                resultPayload = buildStandardMatrixResult(definitions, expressionTex, result, decimals);
-            }
-
-            visibleDefinitions = definitions.filter(function(def){
-                return referencedNames.indexOf(def.name) >= 0;
+            expressionLines = rawExpr.split(/\r?\n/).map(function(line){
+                return line.trim();
+            }).filter(function(line){
+                return line.length > 0;
             });
 
-            if (!visibleDefinitions.length) {
-                visibleDefinitions = definitions;
-            }
+            expressionLines.forEach(function(expressionLine){
+                commandMatch = getCommandMatch(expressionLine);
 
-            renderMatrixOutput(visibleDefinitions, resultPayload.blocks, resultPayload.copyLines, decimals);
+                if (commandMatch) {
+                    argumentInfo = evaluateMatrixArgument(commandMatch.argument, scope);
+                    referencedNames = extractReferencedVariables(argumentInfo.expr, scope);
+                    resultPayload = handleMatrixCommand(commandMatch, argumentInfo, decimals);
+                } else {
+                    transformedExpr = rewriteMatrixSyntax(expressionLine);
+                    result = math.evaluate(transformedExpr, scope);
+                    expressionTex = math.parse(transformedExpr).toTex({ parenthesis: 'auto' });
+                    referencedNames = extractReferencedVariables(transformedExpr, scope);
+                    resultPayload = buildStandardMatrixResult(definitions, expressionTex, result, decimals);
+                }
+
+                visibleDefinitions = definitions.filter(function(def){
+                    return referencedNames.indexOf(def.name) >= 0;
+                });
+
+                if (!visibleDefinitions.length) {
+                    visibleDefinitions = definitions;
+                }
+
+                sections.push({
+                    expression: expressionLine,
+                    definitions: visibleDefinitions,
+                    blocks: resultPayload.blocks,
+                    copyLines: resultPayload.copyLines
+                });
+            });
+
+            renderMatrixSections(sections, decimals);
             storageSet({ matrixVars: rawVars, matrixExpr: rawExpr, decimalPlaces: decimals });
         } catch (e) {
             setErrorResult('Error: ' + e.message);

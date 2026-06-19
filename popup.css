@@ -7,7 +7,7 @@ body {
     font-family: 'Share Tech Mono', 'Consolas', monospace;
     margin: 0;
     padding: 16px;
-    min-width: 560px;
+    min-width: 680px;
     background: linear-gradient(135deg, #0a0e14 0%, #0d1117 50%, #0a0e14 100%);
     color: #00ff41;
     border: 1px solid rgba(0, 255, 65, 0.2);
@@ -308,6 +308,21 @@ body::before {
     margin-top: 8px;
     padding-top: 8px;
     border-top: 1px solid rgba(0, 255, 65, 0.16);
+}
+
+.result-section-title {
+    font-size: 0.78rem;
+    color: rgba(0, 255, 65, 0.85);
+    letter-spacing: 0.06em;
+    margin-bottom: 6px;
+    word-break: break-word;
+}
+
+.result-separator {
+    margin: 14px 0 10px;
+    color: rgba(0, 255, 65, 0.5);
+    white-space: pre;
+    overflow-x: auto;
 }
 
 .result-error {

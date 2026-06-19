@@ -1,6 +1,7 @@
 $(function(){
     var currentTab = 'normal';
     var scalarPlaceholder = 'e.g. sqrt(16), ln(100), 2^(3/4)';
+    var MATRIX_EPSILON = 1e-10;
     var storage = (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) ? chrome.storage.sync : null;
     if (typeof math !== 'undefined' && math.import) {
         math.import({ ln: math.log });
@@ -98,11 +99,12 @@ $(function(){
         var content = literal.substring(1, literal.length - 1);
         var rows = content.split(';').map(function(row){
             var tokens = row.trim().split(/\s+/).filter(Boolean);
-            return tokens.join(', ');
+            if (!tokens.length) return '';
+            return '[' + tokens.join(', ') + ']';
         }).filter(function(row){
             return row.length > 0;
         });
-        return '[' + rows.join('; ') + ']';
+        return '[' + rows.join(', ') + ']';
     }
 
     function rewriteMatrixSyntax(input) {
@@ -127,9 +129,17 @@ $(function(){
         return value;
     }
 
-    function isMatrixValue(value) {
+    function normalizeMatrixData(value) {
         var data = valueToData(value);
-        return Array.isArray(data) && Array.isArray(data[0]);
+
+        if (!Array.isArray(data)) return null;
+        if (!data.length) return [];
+        if (Array.isArray(data[0])) return data;
+        return [data];
+    }
+
+    function isMatrixValue(value) {
+        return normalizeMatrixData(value) !== null;
     }
 
     function scalarToPlain(value, decimals) {
@@ -143,7 +153,7 @@ $(function(){
     }
 
     function matrixToLatex(value, decimals) {
-        var data = valueToData(value);
+        var data = normalizeMatrixData(value);
         var rows = data.map(function(row){
             return row.map(function(cell){
                 return scalarToLatex(cell, decimals);
@@ -157,7 +167,7 @@ $(function(){
     }
 
     function matrixToPlainText(value, decimals) {
-        var data = valueToData(value);
+        var data = normalizeMatrixData(value);
         var rows = data.map(function(row){
             return row.map(function(cell){
                 return scalarToPlain(cell, decimals);
@@ -171,6 +181,629 @@ $(function(){
         if (typeof value === 'number') return formatResult(value, decimals);
         if (value && typeof value.toString === 'function') return value.toString();
         return String(value);
+    }
+
+    function cloneMatrixData(data) {
+        return data.map(function(row){
+            return row.slice();
+        });
+    }
+
+    function roundNearZero(value) {
+        return Math.abs(value) < MATRIX_EPSILON ? 0 : value;
+    }
+
+    function formatSignedNumber(value, decimals) {
+        var absText = scalarToLatex(Math.abs(value), decimals);
+        return value < 0 ? '- ' + absText : '+ ' + absText;
+    }
+
+    function normalizeNumericMatrix(value) {
+        var data = normalizeMatrixData(value);
+        var width;
+
+        if (data === null) {
+            throw new Error('Expected a matrix value');
+        }
+
+        if (!data.length) {
+            return [];
+        }
+
+        width = data[0].length;
+        return data.map(function(row, rowIndex){
+            if (!Array.isArray(row) || row.length !== width) {
+                throw new Error('Matrix rows must all have the same length');
+            }
+
+            return row.map(function(cell, columnIndex){
+                var numeric = cell;
+
+                if (numeric && typeof numeric.valueOf === 'function') {
+                    numeric = numeric.valueOf();
+                }
+                if (typeof numeric !== 'number' || !isFinite(numeric)) {
+                    throw new Error('Matrix entry at row ' + (rowIndex + 1) + ', column ' + (columnIndex + 1) + ' must be a finite number');
+                }
+                return roundNearZero(numeric);
+            });
+        });
+    }
+
+    function isZeroRow(row) {
+        return row.every(function(value){
+            return Math.abs(value) < MATRIX_EPSILON;
+        });
+    }
+
+    function matrixFromData(data) {
+        return cloneMatrixData(data);
+    }
+
+    function vectorToLatex(vector, decimals, orientation) {
+        if (orientation === 'row') {
+            return '\\begin{bmatrix}' + vector.map(function(entry){
+                return scalarToLatex(entry, decimals);
+            }).join(' & ') + '\\end{bmatrix}';
+        }
+
+        return '\\begin{bmatrix}' + vector.map(function(entry){
+            return scalarToLatex(entry, decimals);
+        }).join(' \\\\ ') + '\\end{bmatrix}';
+    }
+
+    function vectorToPlainText(vector) {
+        return '[' + vector.join('; ') + ']';
+    }
+
+    function rowVectorToPlainText(vector) {
+        return '[' + vector.join(' ') + ']';
+    }
+
+    function spanToLatex(vectors, decimals, orientation) {
+        if (!vectors.length) {
+            return '\\{\\mathbf{0}\\}';
+        }
+
+        return '\\operatorname{span}\\left\\{' + vectors.map(function(vector){
+            return vectorToLatex(vector, decimals, orientation);
+        }).join(',\\;') + '\\right\\}';
+    }
+
+    function spanToPlainText(vectors, decimals, orientation) {
+        if (!vectors.length) {
+            return '{0}';
+        }
+
+        return 'span{' + vectors.map(function(vector){
+            return orientation === 'row'
+                ? rowVectorToPlainText(vector.map(function(entry){ return scalarToPlain(entry, decimals); }))
+                : vectorToPlainText(vector.map(function(entry){ return scalarToPlain(entry, decimals); }));
+        }).join(', ') + '}';
+    }
+
+    function matrixOperationToLatex(step, decimals) {
+        var target = 'R_{' + (step.target + 1) + '}';
+        var source = 'R_{' + (step.source + 1) + '}';
+
+        if (step.type === 'swap') {
+            return target + ' \\leftrightarrow ' + source;
+        }
+        if (step.type === 'scale') {
+            return target + ' \\leftarrow ' + scalarToLatex(step.factor, decimals) + target;
+        }
+        if (step.type === 'combine') {
+            return target + ' \\leftarrow ' + target + ' ' + formatSignedNumber(step.factor, decimals) + source;
+        }
+        return '';
+    }
+
+    function matrixOperationToPlainText(step, decimals) {
+        var target = 'R' + (step.target + 1);
+        var source = 'R' + (step.source + 1);
+
+        if (step.type === 'swap') {
+            return target + ' <-> ' + source;
+        }
+        if (step.type === 'scale') {
+            return target + ' <- ' + scalarToPlain(step.factor, decimals) + '*' + target;
+        }
+        if (step.type === 'combine') {
+            return target + ' <- ' + target + ' ' + formatSignedNumber(step.factor, decimals).replace(/\\s+/g, ' ') + ' ' + source;
+        }
+        return '';
+    }
+
+    function reduceToRref(matrixData) {
+        var data = cloneMatrixData(matrixData);
+        var rowCount = data.length;
+        var colCount = rowCount ? data[0].length : 0;
+        var pivotColumns = [];
+        var steps = [{ type: 'start', matrix: cloneMatrixData(data) }];
+        var lead = 0;
+        var rowIndex;
+
+        for (rowIndex = 0; rowIndex < rowCount && lead < colCount; rowIndex++) {
+            var pivotRow = rowIndex;
+
+            while (pivotRow < rowCount && Math.abs(data[pivotRow][lead]) < MATRIX_EPSILON) {
+                pivotRow += 1;
+            }
+
+            while (pivotRow === rowCount) {
+                lead += 1;
+                if (lead >= colCount) {
+                    return {
+                        matrix: data.map(function(row){
+                            return row.map(roundNearZero);
+                        }),
+                        pivotColumns: pivotColumns,
+                        steps: steps
+                    };
+                }
+                pivotRow = rowIndex;
+                while (pivotRow < rowCount && Math.abs(data[pivotRow][lead]) < MATRIX_EPSILON) {
+                    pivotRow += 1;
+                }
+            }
+
+            if (pivotRow !== rowIndex) {
+                var swapped = data[rowIndex];
+                data[rowIndex] = data[pivotRow];
+                data[pivotRow] = swapped;
+                steps.push({ type: 'swap', target: rowIndex, source: pivotRow, matrix: cloneMatrixData(data) });
+            }
+
+            if (Math.abs(data[rowIndex][lead] - 1) >= MATRIX_EPSILON) {
+                var scaleFactor = 1 / data[rowIndex][lead];
+                data[rowIndex] = data[rowIndex].map(function(value){
+                    return roundNearZero(value * scaleFactor);
+                });
+                steps.push({ type: 'scale', target: rowIndex, factor: scaleFactor, matrix: cloneMatrixData(data) });
+            }
+
+            for (var otherRow = 0; otherRow < rowCount; otherRow++) {
+                if (otherRow === rowIndex || Math.abs(data[otherRow][lead]) < MATRIX_EPSILON) continue;
+                var factor = -data[otherRow][lead];
+                data[otherRow] = data[otherRow].map(function(value, columnIndex){
+                    return roundNearZero(value + factor * data[rowIndex][columnIndex]);
+                });
+                steps.push({ type: 'combine', target: otherRow, source: rowIndex, factor: factor, matrix: cloneMatrixData(data) });
+            }
+
+            pivotColumns.push(lead);
+            lead += 1;
+        }
+
+        return {
+            matrix: data.map(function(row){
+                return row.map(roundNearZero);
+            }),
+            pivotColumns: pivotColumns,
+            steps: steps
+        };
+    }
+
+    function requireSquareMatrix(matrixData, label) {
+        if (!matrixData.length) {
+            throw new Error(label + ' requires a non-empty square matrix');
+        }
+        if (matrixData.length !== matrixData[0].length) {
+            throw new Error(label + ' requires a square matrix');
+        }
+    }
+
+    function identityMatrix(size) {
+        return Array.from({ length: size }, function(_, rowIndex){
+            return Array.from({ length: size }, function(__, columnIndex){
+                return rowIndex === columnIndex ? 1 : 0;
+            });
+        });
+    }
+
+    function zeroMatrix(rowCount, colCount) {
+        return Array.from({ length: rowCount }, function(){
+            return Array(colCount).fill(0);
+        });
+    }
+
+    function swapRows(matrixData, firstRow, secondRow) {
+        var tempRow = matrixData[firstRow];
+        matrixData[firstRow] = matrixData[secondRow];
+        matrixData[secondRow] = tempRow;
+    }
+
+    function multiplyMatrices(left, right) {
+        var rowCount = left.length;
+        var innerSize = left[0] ? left[0].length : 0;
+        var colCount = right[0] ? right[0].length : 0;
+        var product = zeroMatrix(rowCount, colCount);
+
+        for (var rowIndex = 0; rowIndex < rowCount; rowIndex++) {
+            for (var colIndex = 0; colIndex < colCount; colIndex++) {
+                var sum = 0;
+                for (var innerIndex = 0; innerIndex < innerSize; innerIndex++) {
+                    sum += left[rowIndex][innerIndex] * right[innerIndex][colIndex];
+                }
+                product[rowIndex][colIndex] = roundNearZero(sum);
+            }
+        }
+
+        return product;
+    }
+
+    function decomposeLu(matrixData) {
+        var size = matrixData.length;
+        var permutation = identityMatrix(size);
+        var lower = identityMatrix(size);
+        var upper = cloneMatrixData(matrixData);
+        var steps = [];
+
+        requireSquareMatrix(matrixData, 'lu');
+
+        for (var pivotIndex = 0; pivotIndex < size; pivotIndex++) {
+            var pivotRow = pivotIndex;
+            var lowerEntries = [];
+            var pivotValue = Math.abs(upper[pivotIndex][pivotIndex]);
+
+            for (var candidateRow = pivotIndex + 1; candidateRow < size; candidateRow++) {
+                var candidateValue = Math.abs(upper[candidateRow][pivotIndex]);
+                if (candidateValue > pivotValue) {
+                    pivotValue = candidateValue;
+                    pivotRow = candidateRow;
+                }
+            }
+
+            if (pivotValue < MATRIX_EPSILON) {
+                throw new Error('PA=LU is not available because the matrix is singular at pivot column ' + (pivotIndex + 1));
+            }
+
+            if (pivotRow !== pivotIndex) {
+                swapRows(upper, pivotIndex, pivotRow);
+                swapRows(permutation, pivotIndex, pivotRow);
+                for (var lowerSwapIndex = 0; lowerSwapIndex < pivotIndex; lowerSwapIndex++) {
+                    var lowerTemp = lower[pivotIndex][lowerSwapIndex];
+                    lower[pivotIndex][lowerSwapIndex] = lower[pivotRow][lowerSwapIndex];
+                    lower[pivotRow][lowerSwapIndex] = lowerTemp;
+                }
+            }
+
+            for (var rowIndex = pivotIndex + 1; rowIndex < size; rowIndex++) {
+                lower[rowIndex][pivotIndex] = roundNearZero(upper[rowIndex][pivotIndex] / upper[pivotIndex][pivotIndex]);
+                lowerEntries.push({ row: rowIndex, col: pivotIndex, value: lower[rowIndex][pivotIndex] });
+                for (var colIndex = pivotIndex; colIndex < size; colIndex++) {
+                    upper[rowIndex][colIndex] = roundNearZero(upper[rowIndex][colIndex] - lower[rowIndex][pivotIndex] * upper[pivotIndex][colIndex]);
+                }
+            }
+
+            steps.push({
+                pivot: pivotIndex,
+                pivotRow: pivotRow,
+                pivotValue: roundNearZero(upper[pivotIndex][pivotIndex]),
+                lowerEntries: lowerEntries,
+                permutation: cloneMatrixData(permutation),
+                lower: cloneMatrixData(lower),
+                upper: cloneMatrixData(upper)
+            });
+        }
+
+        return {
+            permutation: permutation,
+            lower: lower,
+            upper: upper,
+            steps: steps,
+            product: multiplyMatrices(lower, upper),
+            permutedOriginal: multiplyMatrices(permutation, matrixData)
+        };
+    }
+
+    function formatEntryListLatex(entries, symbol, decimals) {
+        if (!entries.length) return '\\varnothing';
+        return entries.map(function(entry){
+            return symbol + '_{' + (entry.row + 1) + ',' + (entry.col + 1) + '}=' + scalarToLatex(entry.value, decimals);
+        }).join(',\\;');
+    }
+
+    function formatEntryListPlain(entries, symbol, decimals) {
+        if (!entries.length) return 'none';
+        return entries.map(function(entry){
+            return symbol + '(' + (entry.row + 1) + ',' + (entry.col + 1) + ')=' + scalarToPlain(entry.value, decimals);
+        }).join(', ');
+    }
+
+    function getCommandMatch(expr) {
+        var match = expr.match(/^\s*([A-Za-z_]\w*)\s*\((.*)\)\s*$/);
+        var name;
+
+        if (!match) return null;
+        name = match[1].toLowerCase();
+        if (['col', 'row', 'null', 'rref', 'solve_rref', 'lu', 'solve_lu', 'cr', 'solve_cr'].indexOf(name) < 0) {
+            return null;
+        }
+
+        return {
+            name: name,
+            argument: match[2].trim()
+        };
+    }
+
+    function evaluateMatrixArgument(argumentExpr, scope) {
+        var rewritten = rewriteMatrixSyntax(argumentExpr);
+        var value = math.evaluate(rewritten, scope);
+        var data = normalizeNumericMatrix(value);
+        return {
+            expr: rewritten,
+            value: value,
+            data: data,
+            rref: reduceToRref(data)
+        };
+    }
+
+    function renderDefinitionBlocks(definitions, decimals) {
+        return definitions.map(function(def){
+            return renderKatexBlock(def.name + ' = ' + valueToLatex(def.value, decimals));
+        }).join('');
+    }
+
+    function buildDefinitionCopyLines(definitions, decimals) {
+        return definitions.map(function(def){
+            return def.name + ' = ' + valueToCopyText(def.value, decimals);
+        });
+    }
+
+    function renderMatrixOutput(definitions, resultBlocks, copyLines, decimals) {
+        var html = renderDefinitionBlocks(definitions, decimals) + resultBlocks.join('');
+        var allCopyLines = buildDefinitionCopyLines(definitions, decimals).concat(copyLines);
+        setHtmlResult(html, allCopyLines.join('\n'));
+    }
+
+    function buildStandardMatrixResult(definitions, expressionTex, result, decimals) {
+        return {
+            blocks: [renderKatexBlock('C = ' + expressionTex + ' = ' + valueToLatex(result, decimals))],
+            copyLines: [
+                'C = ' + valueToCopyText(result, decimals),
+                'Expression = ' + expressionTex
+            ]
+        };
+    }
+
+    function getPivotColumnsText(pivotColumns) {
+        if (!pivotColumns.length) return 'none';
+        return pivotColumns.map(function(index){
+            return String(index + 1);
+        }).join(', ');
+    }
+
+    function handleMatrixCommand(command, argumentInfo, decimals) {
+        var rrefData = argumentInfo.rref.matrix;
+        var pivotColumns = argumentInfo.rref.pivotColumns;
+        var originalData = argumentInfo.data;
+        var rowBasis;
+        var colBasis;
+        var freeColumns;
+        var nullBasis;
+        var lines;
+        var exprTex = math.parse(argumentInfo.expr).toTex({ parenthesis: 'auto' });
+        var luResult;
+        var rankRows;
+        var cMatrix;
+        var rMatrix;
+        var copiedRows;
+        var selectedColumns;
+
+        if (command.name === 'rref') {
+            return {
+                blocks: [
+                    renderKatexBlock('C = \\operatorname{rref}\\left(' + exprTex + '\\right) = ' + matrixToLatex(matrixFromData(rrefData), decimals)),
+                    renderKatexBlock('\\text{Pivot columns: } ' + getPivotColumnsText(pivotColumns))
+                ],
+                copyLines: [
+                    'C = ' + matrixToPlainText(matrixFromData(rrefData), decimals),
+                    'Pivot columns = ' + getPivotColumnsText(pivotColumns)
+                ]
+            };
+        }
+
+        if (command.name === 'solve_rref') {
+            lines = ['solve_rref(' + argumentInfo.expr + ')'];
+            return {
+                blocks: argumentInfo.rref.steps.map(function(step, index){
+                    if (step.type === 'start') {
+                        lines.push('Start = ' + matrixToPlainText(matrixFromData(step.matrix), decimals));
+                        return renderKatexBlock('\\text{Start} = ' + matrixToLatex(matrixFromData(step.matrix), decimals));
+                    }
+
+                    lines.push('Step ' + index + ': ' + matrixOperationToPlainText(step, decimals) + ' => ' + matrixToPlainText(matrixFromData(step.matrix), decimals));
+                    return renderKatexBlock('\\text{Step ' + index + ': } ' + matrixOperationToLatex(step, decimals) + '\\qquad ' + matrixToLatex(matrixFromData(step.matrix), decimals));
+                }).concat([
+                    renderKatexBlock('C = \\operatorname{rref}\\left(' + exprTex + '\\right) = ' + matrixToLatex(matrixFromData(rrefData), decimals))
+                ]),
+                copyLines: lines.concat(['C = ' + matrixToPlainText(matrixFromData(rrefData), decimals)])
+            };
+        }
+
+        if (command.name === 'lu') {
+            luResult = decomposeLu(originalData);
+            return {
+                blocks: [
+                    renderKatexBlock('P' + exprTex + ' = LU'),
+                    renderKatexBlock('P = ' + matrixToLatex(matrixFromData(luResult.permutation), decimals)),
+                    renderKatexBlock('L = ' + matrixToLatex(matrixFromData(luResult.lower), decimals)),
+                    renderKatexBlock('U = ' + matrixToLatex(matrixFromData(luResult.upper), decimals)),
+                    renderKatexBlock('PA = ' + matrixToLatex(matrixFromData(luResult.permutedOriginal), decimals)),
+                    renderKatexBlock('LU = ' + matrixToLatex(matrixFromData(luResult.product), decimals))
+                ],
+                copyLines: [
+                    'P = ' + matrixToPlainText(matrixFromData(luResult.permutation), decimals),
+                    'L = ' + matrixToPlainText(matrixFromData(luResult.lower), decimals),
+                    'U = ' + matrixToPlainText(matrixFromData(luResult.upper), decimals),
+                    'PA = ' + matrixToPlainText(matrixFromData(luResult.permutedOriginal), decimals),
+                    'LU = ' + matrixToPlainText(matrixFromData(luResult.product), decimals)
+                ]
+            };
+        }
+
+        if (command.name === 'solve_lu') {
+            luResult = decomposeLu(originalData);
+            lines = ['solve_lu(' + argumentInfo.expr + ')'];
+            return {
+                blocks: [
+                    renderKatexBlock('P' + exprTex + ' = LU')
+                ].concat(luResult.steps.map(function(step, index){
+                    lines.push('Stage ' + (index + 1) + ': pivot row = ' + (step.pivotRow + 1));
+                    if (step.pivotRow !== step.pivot) {
+                        lines.push('Stage ' + (index + 1) + ': swap row ' + (step.pivot + 1) + ' with row ' + (step.pivotRow + 1));
+                    }
+                    if (step.lowerEntries.length) {
+                        lines.push('Stage ' + (index + 1) + ': L entries -> ' + formatEntryListPlain(step.lowerEntries, 'L', decimals));
+                    }
+                    lines.push('Stage ' + (index + 1) + ': P = ' + matrixToPlainText(matrixFromData(step.permutation), decimals));
+                    lines.push('Stage ' + (index + 1) + ': L = ' + matrixToPlainText(matrixFromData(step.lower), decimals));
+                    lines.push('Stage ' + (index + 1) + ': U = ' + matrixToPlainText(matrixFromData(step.upper), decimals));
+                    return renderKatexBlock('\\text{Stage ' + (index + 1) + ': pivot row } ' + (step.pivotRow + 1) + (step.pivotRow !== step.pivot ? '\\text{, swap } R_{' + (step.pivot + 1) + '} \\leftrightarrow R_{' + (step.pivotRow + 1) + '}' : '') + (step.lowerEntries.length ? ',\\;' + formatEntryListLatex(step.lowerEntries, 'L', decimals) : '') + '\\qquad P=' + matrixToLatex(matrixFromData(step.permutation), decimals) + '\\qquad L=' + matrixToLatex(matrixFromData(step.lower), decimals) + '\\qquad U=' + matrixToLatex(matrixFromData(step.upper), decimals));
+                })).concat([
+                    renderKatexBlock('P = ' + matrixToLatex(matrixFromData(luResult.permutation), decimals)),
+                    renderKatexBlock('L = ' + matrixToLatex(matrixFromData(luResult.lower), decimals)),
+                    renderKatexBlock('U = ' + matrixToLatex(matrixFromData(luResult.upper), decimals)),
+                    renderKatexBlock('PA = ' + matrixToLatex(matrixFromData(luResult.permutedOriginal), decimals)),
+                    renderKatexBlock('LU = ' + matrixToLatex(matrixFromData(luResult.product), decimals))
+                ]),
+                copyLines: lines.concat([
+                    'P = ' + matrixToPlainText(matrixFromData(luResult.permutation), decimals),
+                    'L = ' + matrixToPlainText(matrixFromData(luResult.lower), decimals),
+                    'U = ' + matrixToPlainText(matrixFromData(luResult.upper), decimals),
+                    'PA = ' + matrixToPlainText(matrixFromData(luResult.permutedOriginal), decimals),
+                    'LU = ' + matrixToPlainText(matrixFromData(luResult.product), decimals)
+                ])
+            };
+        }
+
+        if (command.name === 'row') {
+            rowBasis = rrefData.filter(function(row){
+                return !isZeroRow(row);
+            });
+            return {
+                blocks: [
+                    renderKatexBlock('C = \\operatorname{row}\\left(' + exprTex + '\\right) = ' + spanToLatex(rowBasis, decimals, 'row'))
+                ],
+                copyLines: [
+                    'C = ' + spanToPlainText(rowBasis, decimals, 'row')
+                ]
+            };
+        }
+
+        if (command.name === 'col') {
+            colBasis = pivotColumns.map(function(columnIndex){
+                return originalData.map(function(row){
+                    return row[columnIndex];
+                });
+            });
+            return {
+                blocks: [
+                    renderKatexBlock('C = \\operatorname{col}\\left(' + exprTex + '\\right) = ' + spanToLatex(colBasis, decimals, 'column'))
+                ],
+                copyLines: [
+                    'C = ' + spanToPlainText(colBasis, decimals, 'column')
+                ]
+            };
+        }
+
+        if (command.name === 'cr') {
+            colBasis = pivotColumns.map(function(columnIndex){
+                return originalData.map(function(row){
+                    return row[columnIndex];
+                });
+            });
+            rankRows = rrefData.filter(function(row){
+                return !isZeroRow(row);
+            });
+            cMatrix = originalData.map(function(row){
+                return pivotColumns.map(function(columnIndex){
+                    return row[columnIndex];
+                });
+            });
+            rMatrix = rankRows;
+            return {
+                blocks: [
+                    renderKatexBlock(exprTex + ' = CR'),
+                    renderKatexBlock('C = ' + matrixToLatex(matrixFromData(cMatrix), decimals)),
+                    renderKatexBlock('R = ' + matrixToLatex(matrixFromData(rMatrix), decimals)),
+                    renderKatexBlock('CR = ' + matrixToLatex(matrixFromData(multiplyMatrices(cMatrix, rMatrix)), decimals))
+                ],
+                copyLines: [
+                    'C = ' + matrixToPlainText(matrixFromData(cMatrix), decimals),
+                    'R = ' + matrixToPlainText(matrixFromData(rMatrix), decimals),
+                    'CR = ' + matrixToPlainText(matrixFromData(multiplyMatrices(cMatrix, rMatrix)), decimals)
+                ]
+            };
+        }
+
+        if (command.name === 'solve_cr') {
+            selectedColumns = pivotColumns.map(function(columnIndex){
+                return columnIndex + 1;
+            });
+            cMatrix = originalData.map(function(row){
+                return pivotColumns.map(function(columnIndex){
+                    return row[columnIndex];
+                });
+            });
+            rankRows = rrefData.filter(function(row){
+                return !isZeroRow(row);
+            });
+            rMatrix = rankRows;
+            copiedRows = rankRows.map(function(row, rowIndex){
+                return 'Row ' + (rowIndex + 1) + ' = ' + rowVectorToPlainText(row.map(function(entry){
+                    return scalarToPlain(entry, decimals);
+                }));
+            });
+            return {
+                blocks: [
+                    renderKatexBlock(exprTex + ' = CR'),
+                    renderKatexBlock('\\text{Pivot columns selected from } \\operatorname{rref}(' + exprTex + ')\\text{: } ' + getPivotColumnsText(pivotColumns)),
+                    renderKatexBlock('C = ' + matrixToLatex(matrixFromData(cMatrix), decimals)),
+                    renderKatexBlock('\\text{Non-zero rows of } \\operatorname{rref}(' + exprTex + ')\\text{ form } R'),
+                    renderKatexBlock('R = ' + matrixToLatex(matrixFromData(rMatrix), decimals)),
+                    renderKatexBlock(exprTex + ' = ' + matrixToLatex(matrixFromData(cMatrix), decimals) + '\\,' + matrixToLatex(matrixFromData(rMatrix), decimals))
+                ],
+                copyLines: [
+                    'solve_cr(' + argumentInfo.expr + ')',
+                    'Pivot columns = ' + selectedColumns.join(', '),
+                    'C = ' + matrixToPlainText(matrixFromData(cMatrix), decimals),
+                    'R rows = ' + copiedRows.join(' | '),
+                    'R = ' + matrixToPlainText(matrixFromData(rMatrix), decimals),
+                    argumentInfo.expr + ' = ' + matrixToPlainText(matrixFromData(cMatrix), decimals) + ' ' + matrixToPlainText(matrixFromData(rMatrix), decimals)
+                ]
+            };
+        }
+
+        if (command.name === 'null') {
+            freeColumns = [];
+            for (var columnIndex = 0; columnIndex < (originalData[0] || []).length; columnIndex++) {
+                if (pivotColumns.indexOf(columnIndex) < 0) {
+                    freeColumns.push(columnIndex);
+                }
+            }
+
+            nullBasis = freeColumns.map(function(freeColumn){
+                var vector = new Array((originalData[0] || []).length).fill(0);
+                vector[freeColumn] = 1;
+                pivotColumns.forEach(function(pivotColumn, pivotRow){
+                    vector[pivotColumn] = roundNearZero(-rrefData[pivotRow][freeColumn]);
+                });
+                return vector;
+            });
+
+            return {
+                blocks: [
+                    renderKatexBlock('C = \\operatorname{null}\\left(' + exprTex + '\\right) = ' + spanToLatex(nullBasis, decimals, 'column'))
+                ],
+                copyLines: [
+                    'C = ' + spanToPlainText(nullBasis, decimals, 'column')
+                ]
+            };
+        }
+
+        throw new Error('Unsupported matrix command: ' + command.name);
     }
 
     function renderKatexBlock(tex) {
@@ -238,16 +871,6 @@ $(function(){
         return lines.join('\n');
     }
 
-    function renderMatrixResult(definitions, expressionTex, result, decimals) {
-        var blocks = definitions.map(function(def){
-            return renderKatexBlock(def.name + ' = ' + valueToLatex(def.value, decimals));
-        });
-
-        blocks.push(renderKatexBlock('C = ' + expressionTex + ' = ' + valueToLatex(result, decimals)));
-
-        setHtmlResult(blocks.join(''), buildMatrixCopyText(definitions, expressionTex, result, decimals));
-    }
-
     function calculateNormal() {
         var rawExpr = $('#expression').val();
         var expr = reformatExpression(rawExpr);
@@ -283,12 +906,15 @@ $(function(){
         var rawExpr = $('#matrixExpression').val();
         var decimals = parseInt($('#decimalPlaces').val(), 10);
         var scope = {};
+        var commandMatch;
         var definitions;
         var transformedExpr;
         var referencedNames;
         var visibleDefinitions;
         var result;
         var expressionTex;
+        var resultPayload;
+        var argumentInfo;
 
         if (!rawExpr || !rawExpr.trim()) {
             setErrorResult('Error: Enter a matrix expression');
@@ -297,10 +923,20 @@ $(function(){
 
         try {
             definitions = parseMatrixAssignments(rawVars || '', scope);
-            transformedExpr = rewriteMatrixSyntax(rawExpr.trim());
-            result = math.evaluate(transformedExpr, scope);
-            expressionTex = math.parse(transformedExpr).toTex({ parenthesis: 'auto' });
-            referencedNames = extractReferencedVariables(transformedExpr, scope);
+            commandMatch = getCommandMatch(rawExpr.trim());
+
+            if (commandMatch) {
+                argumentInfo = evaluateMatrixArgument(commandMatch.argument, scope);
+                referencedNames = extractReferencedVariables(argumentInfo.expr, scope);
+                resultPayload = handleMatrixCommand(commandMatch, argumentInfo, decimals);
+            } else {
+                transformedExpr = rewriteMatrixSyntax(rawExpr.trim());
+                result = math.evaluate(transformedExpr, scope);
+                expressionTex = math.parse(transformedExpr).toTex({ parenthesis: 'auto' });
+                referencedNames = extractReferencedVariables(transformedExpr, scope);
+                resultPayload = buildStandardMatrixResult(definitions, expressionTex, result, decimals);
+            }
+
             visibleDefinitions = definitions.filter(function(def){
                 return referencedNames.indexOf(def.name) >= 0;
             });
@@ -309,7 +945,7 @@ $(function(){
                 visibleDefinitions = definitions;
             }
 
-            renderMatrixResult(visibleDefinitions, expressionTex, result, decimals);
+            renderMatrixOutput(visibleDefinitions, resultPayload.blocks, resultPayload.copyLines, decimals);
             storageSet({ matrixVars: rawVars, matrixExpr: rawExpr, decimalPlaces: decimals });
         } catch (e) {
             setErrorResult('Error: ' + e.message);

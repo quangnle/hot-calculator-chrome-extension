@@ -264,7 +264,9 @@ body::before {
     margin: 0;
     color: #00ff41;
     min-height: 28px;
-    overflow-x: auto;
+    max-height: 360px;
+    overflow: auto;
+    padding-right: 4px;
 }
 
 .result-text.empty {
@@ -280,6 +282,26 @@ body::before {
     margin: 0.55em 0;
     overflow-x: auto;
     overflow-y: hidden;
+}
+
+.result-text::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+.result-text::-webkit-scrollbar-track {
+    background: rgba(0, 20, 10, 0.45);
+    border-radius: 999px;
+}
+
+.result-text::-webkit-scrollbar-thumb {
+    background: rgba(0, 255, 65, 0.35);
+    border-radius: 999px;
+    border: 2px solid rgba(0, 20, 10, 0.45);
+}
+
+.result-text::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 255, 65, 0.55);
 }
 
 .result-block + .result-block {

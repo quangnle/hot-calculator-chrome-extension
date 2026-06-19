@@ -284,23 +284,39 @@ body::before {
     overflow-y: hidden;
 }
 
-.result-text::-webkit-scrollbar {
+#matrixVariables::-webkit-scrollbar,
+#matrixExpression::-webkit-scrollbar,
+.result-text::-webkit-scrollbar,
+.result-text .katex-display::-webkit-scrollbar,
+.result-separator::-webkit-scrollbar {
     width: 10px;
     height: 10px;
 }
 
-.result-text::-webkit-scrollbar-track {
+#matrixVariables::-webkit-scrollbar-track,
+#matrixExpression::-webkit-scrollbar-track,
+.result-text::-webkit-scrollbar-track,
+.result-text .katex-display::-webkit-scrollbar-track,
+.result-separator::-webkit-scrollbar-track {
     background: rgba(0, 20, 10, 0.45);
     border-radius: 999px;
 }
 
-.result-text::-webkit-scrollbar-thumb {
+#matrixVariables::-webkit-scrollbar-thumb,
+#matrixExpression::-webkit-scrollbar-thumb,
+.result-text::-webkit-scrollbar-thumb,
+.result-text .katex-display::-webkit-scrollbar-thumb,
+.result-separator::-webkit-scrollbar-thumb {
     background: rgba(0, 255, 65, 0.35);
     border-radius: 999px;
     border: 2px solid rgba(0, 20, 10, 0.45);
 }
 
-.result-text::-webkit-scrollbar-thumb:hover {
+#matrixVariables::-webkit-scrollbar-thumb:hover,
+#matrixExpression::-webkit-scrollbar-thumb:hover,
+.result-text::-webkit-scrollbar-thumb:hover,
+.result-text .katex-display::-webkit-scrollbar-thumb:hover,
+.result-separator::-webkit-scrollbar-thumb:hover {
     background: rgba(0, 255, 65, 0.55);
 }
 

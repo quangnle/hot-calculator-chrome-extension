@@ -511,13 +511,491 @@ $(function(){
         }).join(', ');
     }
 
+    function isComplexValue(value) {
+        return !!(value && typeof value === 'object' && value.mathjs === 'Complex');
+    }
+
+    function normalizeComputedScalar(value) {
+        if (typeof value === 'number') {
+            return roundNearZero(value);
+        }
+
+        if (isComplexValue(value)) {
+            var realPart = roundNearZero(value.re);
+            var imaginaryPart = roundNearZero(value.im);
+
+            if (imaginaryPart === 0) {
+                return realPart;
+            }
+
+            return math.complex(realPart, imaginaryPart);
+        }
+
+        return value;
+    }
+
+    function scalarMagnitude(value) {
+        if (typeof value === 'number') {
+            return Math.abs(value);
+        }
+
+        if (isComplexValue(value)) {
+            return math.abs(value);
+        }
+
+        return Math.abs(Number(value));
+    }
+
+    function isScalarZero(value) {
+        return scalarMagnitude(value) < MATRIX_EPSILON;
+    }
+
+    function normalizeComputedMatrix(value) {
+        var data = normalizeMatrixData(value);
+        var width;
+
+        if (data === null) {
+            throw new Error('Expected a matrix value');
+        }
+
+        if (!data.length) {
+            return [];
+        }
+
+        width = data[0].length;
+        return data.map(function(row){
+            if (!Array.isArray(row) || row.length !== width) {
+                throw new Error('Matrix rows must all have the same length');
+            }
+
+            return row.map(function(cell){
+                var scalar = cell;
+
+                if (scalar && typeof scalar.valueOf === 'function') {
+                    scalar = scalar.valueOf();
+                }
+
+                return normalizeComputedScalar(scalar);
+            });
+        });
+    }
+
+    function cloneAnyMatrixData(data) {
+        return data.map(function(row){
+            return row.slice();
+        });
+    }
+
+    function subtractLambdaIdentity(matrixData, lambda) {
+        return matrixData.map(function(row, rowIndex){
+            return row.map(function(value, columnIndex){
+                if (rowIndex !== columnIndex) {
+                    return normalizeComputedScalar(value);
+                }
+
+                return normalizeComputedScalar(math.subtract(value, lambda));
+            });
+        });
+    }
+
+    function reduceToRrefGeneric(matrixData) {
+        var data = cloneAnyMatrixData(matrixData);
+        var rowCount = data.length;
+        var colCount = rowCount ? data[0].length : 0;
+        var pivotColumns = [];
+        var lead = 0;
+        var rowIndex;
+
+        for (rowIndex = 0; rowIndex < rowCount && lead < colCount; rowIndex++) {
+            var pivotRow = rowIndex;
+
+            while (pivotRow < rowCount && isScalarZero(data[pivotRow][lead])) {
+                pivotRow += 1;
+            }
+
+            while (pivotRow === rowCount) {
+                lead += 1;
+                if (lead >= colCount) {
+                    return {
+                        matrix: data.map(function(row){
+                            return row.map(normalizeComputedScalar);
+                        }),
+                        pivotColumns: pivotColumns
+                    };
+                }
+                pivotRow = rowIndex;
+                while (pivotRow < rowCount && isScalarZero(data[pivotRow][lead])) {
+                    pivotRow += 1;
+                }
+            }
+
+            if (pivotRow !== rowIndex) {
+                swapRows(data, rowIndex, pivotRow);
+            }
+
+            if (!isScalarZero(math.subtract(data[rowIndex][lead], 1))) {
+                var pivotScale = math.divide(1, data[rowIndex][lead]);
+                data[rowIndex] = data[rowIndex].map(function(value){
+                    return normalizeComputedScalar(math.multiply(value, pivotScale));
+                });
+            }
+
+            for (var otherRow = 0; otherRow < rowCount; otherRow++) {
+                if (otherRow === rowIndex || isScalarZero(data[otherRow][lead])) continue;
+
+                var eliminationFactor = math.multiply(-1, data[otherRow][lead]);
+                data[otherRow] = data[otherRow].map(function(value, columnIndex){
+                    return normalizeComputedScalar(math.add(value, math.multiply(eliminationFactor, data[rowIndex][columnIndex])));
+                });
+            }
+
+            pivotColumns.push(lead);
+            lead += 1;
+        }
+
+        return {
+            matrix: data.map(function(row){
+                return row.map(normalizeComputedScalar);
+            }),
+            pivotColumns: pivotColumns
+        };
+    }
+
+    function buildNullBasisFromRref(rrefData, pivotColumns) {
+        var columnCount = (rrefData[0] || []).length;
+        var freeColumns = [];
+        var basis = [];
+        var columnIndex;
+
+        for (columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            if (pivotColumns.indexOf(columnIndex) < 0) {
+                freeColumns.push(columnIndex);
+            }
+        }
+
+        freeColumns.forEach(function(freeColumn){
+            var vector = new Array(columnCount).fill(0);
+            vector[freeColumn] = 1;
+
+            pivotColumns.forEach(function(pivotColumn, pivotRow){
+                vector[pivotColumn] = normalizeComputedScalar(math.multiply(-1, rrefData[pivotRow][freeColumn]));
+            });
+
+            basis.push(vector);
+        });
+
+        return basis;
+    }
+
+    function formatVectorPlainText(vector, decimals) {
+        return '[' + vector.map(function(entry){
+            return scalarToPlain(entry, decimals);
+        }).join('; ') + ']';
+    }
+
+    function formatRowVectorPlainText(vector, decimals) {
+        return '[' + vector.map(function(entry){
+            return scalarToPlain(entry, decimals);
+        }).join(' ') + ']';
+    }
+
+    function formatEigenvalueLabel(index, value, decimals) {
+        return '\\lambda_{' + index + '} = ' + scalarToLatex(value, decimals);
+    }
+
+    function buildEigenvalueSummary(values, decimals) {
+        return values.map(function(value, index){
+            return formatEigenvalueLabel(index + 1, value, decimals);
+        }).join(',\\;');
+    }
+
+    function traceMatrix(matrixData) {
+        return matrixData.reduce(function(sum, row, index){
+            return normalizeComputedScalar(math.add(sum, row[index]));
+        }, 0);
+    }
+
+    function scaleIdentityMatrix(size, scalar) {
+        return identityMatrix(size).map(function(row){
+            return row.map(function(entry){
+                return entry === 0 ? 0 : normalizeComputedScalar(scalar);
+            });
+        });
+    }
+
+    function addMatricesGeneric(left, right) {
+        return left.map(function(row, rowIndex){
+            return row.map(function(value, columnIndex){
+                return normalizeComputedScalar(math.add(value, right[rowIndex][columnIndex]));
+            });
+        });
+    }
+
+    function multiplyMatricesGeneric(left, right) {
+        var rowCount = left.length;
+        var innerSize = left[0] ? left[0].length : 0;
+        var colCount = right[0] ? right[0].length : 0;
+        var product = zeroMatrix(rowCount, colCount);
+
+        for (var rowIndex = 0; rowIndex < rowCount; rowIndex++) {
+            for (var colIndex = 0; colIndex < colCount; colIndex++) {
+                var sum = 0;
+                for (var innerIndex = 0; innerIndex < innerSize; innerIndex++) {
+                    sum = normalizeComputedScalar(math.add(sum, math.multiply(left[rowIndex][innerIndex], right[innerIndex][colIndex])));
+                }
+                product[rowIndex][colIndex] = sum;
+            }
+        }
+
+        return product;
+    }
+
+    function buildCharacteristicPolynomialData(matrixData) {
+        var size = matrixData.length;
+        var previousB;
+        var coefficients = [1];
+        var steps = [];
+
+        requireSquareMatrix(matrixData, 'characteristic polynomial');
+        previousB = identityMatrix(size);
+
+        for (var index = 1; index <= size; index++) {
+            var product = multiplyMatricesGeneric(matrixData, previousB);
+            var traceValue = traceMatrix(product);
+            var coefficient = normalizeComputedScalar(math.multiply(-1 / index, traceValue));
+            var currentB = addMatricesGeneric(product, scaleIdentityMatrix(size, coefficient));
+
+            coefficients.push(coefficient);
+            steps.push({
+                index: index,
+                trace: traceValue,
+                coefficient: coefficient,
+                bMatrix: currentB
+            });
+            previousB = currentB;
+        }
+
+        return {
+            coefficients: coefficients,
+            steps: steps
+        };
+    }
+
+    function formatPolynomialLatex(coefficients, decimals, variableName) {
+        var degree = coefficients.length - 1;
+        var terms = [];
+
+        coefficients.forEach(function(rawCoefficient, index){
+            var coefficient = normalizeComputedScalar(rawCoefficient);
+            var power = degree - index;
+            var isLeading = index === 0;
+            var isZero = isScalarZero(coefficient);
+            var absoluteValue;
+            var coefficientText;
+            var powerText;
+            var term;
+
+            if (isZero) return;
+
+            absoluteValue = isLeading ? coefficient : normalizeComputedScalar(math.abs ? math.abs(coefficient) : Math.abs(coefficient));
+            coefficientText = scalarToLatex(absoluteValue, decimals);
+            powerText = power === 0 ? '' : (power === 1 ? variableName : variableName + '^{' + power + '}');
+
+            if (power !== 0 && coefficientText === '1') {
+                term = powerText;
+            } else {
+                term = coefficientText + (powerText ? powerText : '');
+            }
+
+            if (isLeading) {
+                if (typeof coefficient === 'number' && coefficient < 0) {
+                    terms.push('-' + term);
+                } else if (isComplexValue(coefficient) && coefficient.re < 0 && coefficient.im === 0) {
+                    terms.push('-' + term);
+                } else {
+                    terms.push(term);
+                }
+            } else {
+                if ((typeof coefficient === 'number' && coefficient < 0) || (isComplexValue(coefficient) && coefficient.re < 0 && coefficient.im === 0)) {
+                    terms.push('- ' + term);
+                } else {
+                    terms.push('+ ' + term);
+                }
+            }
+        });
+
+        return terms.length ? terms.join(' ') : '0';
+    }
+
+    function formatPolynomialPlain(coefficients, decimals, variableName) {
+        var degree = coefficients.length - 1;
+        var terms = [];
+
+        coefficients.forEach(function(rawCoefficient, index){
+            var coefficient = normalizeComputedScalar(rawCoefficient);
+            var power = degree - index;
+            var isLeading = index === 0;
+            var isZero = isScalarZero(coefficient);
+            var negative = (typeof coefficient === 'number' && coefficient < 0) || (isComplexValue(coefficient) && coefficient.re < 0 && coefficient.im === 0);
+            var absoluteValue = negative ? normalizeComputedScalar(math.multiply(-1, coefficient)) : coefficient;
+            var coefficientText = scalarToPlain(absoluteValue, decimals);
+            var powerText = power === 0 ? '' : (power === 1 ? variableName : variableName + '^' + power);
+            var term;
+
+            if (isZero) return;
+
+            if (power !== 0 && coefficientText === '1') {
+                term = powerText;
+            } else {
+                term = coefficientText + powerText;
+            }
+
+            if (isLeading) {
+                terms.push(negative ? '-' + term : term);
+            } else {
+                terms.push((negative ? '- ' : '+ ') + term);
+            }
+        });
+
+        return terms.length ? terms.join(' ') : '0';
+    }
+
+    function matrixMinusLambdaToLatex(matrixData, decimals, variableName) {
+        var rows = matrixData.map(function(row, rowIndex){
+            return row.map(function(value, columnIndex){
+                if (rowIndex === columnIndex) {
+                    var scalarText = scalarToLatex(value, decimals);
+                    if (scalarText === '0') return '-' + variableName;
+                    return scalarText + ' - ' + variableName;
+                }
+                return scalarToLatex(value, decimals);
+            }).join(' & ');
+        }).join(' \\\\ ');
+
+        return '\\begin{bmatrix}' + rows + '\\end{bmatrix}';
+    }
+
+    function matrixMinusLambdaToPlain(matrixData, decimals, variableName) {
+        var rows = matrixData.map(function(row, rowIndex){
+            return row.map(function(value, columnIndex){
+                if (rowIndex === columnIndex) {
+                    return scalarToPlain(value, decimals) + ' - ' + variableName;
+                }
+                return scalarToPlain(value, decimals);
+            }).join(' ');
+        });
+
+        return '[' + rows.join('; ') + ']';
+    }
+
+    function scalarKey(value, decimals) {
+        return scalarToPlain(normalizeComputedScalar(value), decimals || 12);
+    }
+
+    function getEigenspaceData(matrixData) {
+        var eigResult;
+        var eigenvalues;
+        var groups = [];
+        var characteristicPolynomial;
+
+        requireSquareMatrix(matrixData, 'eigen operations');
+        eigResult = math.eigs(matrixData);
+        eigenvalues = eigResult.values.map(normalizeComputedScalar);
+        characteristicPolynomial = buildCharacteristicPolynomialData(matrixData);
+
+        eigenvalues.forEach(function(value){
+            var key = scalarKey(value, 12);
+            var existingGroup = null;
+            var shiftedMatrix;
+            var rrefResult;
+
+            groups.some(function(group){
+                if (group.key === key) {
+                    existingGroup = group;
+                    return true;
+                }
+                return false;
+            });
+
+            if (existingGroup) {
+                existingGroup.algebraicMultiplicity += 1;
+                return;
+            }
+
+            shiftedMatrix = subtractLambdaIdentity(matrixData, value);
+            rrefResult = reduceToRrefGeneric(shiftedMatrix);
+            groups.push({
+                key: key,
+                value: value,
+                shiftedMatrix: shiftedMatrix,
+                rrefMatrix: rrefResult.matrix,
+                pivotColumns: rrefResult.pivotColumns,
+                basis: buildNullBasisFromRref(rrefResult.matrix, rrefResult.pivotColumns),
+                algebraicMultiplicity: 1
+            });
+        });
+
+        groups.forEach(function(group){
+            group.geometricMultiplicity = group.basis.length;
+        });
+
+        return {
+            values: eigenvalues,
+            groups: groups,
+            characteristicPolynomial: characteristicPolynomial,
+            isDiagonalizable: groups.reduce(function(total, group){
+                return total + group.geometricMultiplicity;
+            }, 0) === matrixData.length
+        };
+    }
+
+    function buildDiagonalizationData(matrixData) {
+        var eigenData = getEigenspaceData(matrixData);
+        var basisVectors = [];
+        var diagonalEntries = [];
+        var sMatrix;
+        var lambdaMatrix;
+        var inverseMatrix;
+        var reconstructed;
+
+        if (!eigenData.isDiagonalizable) {
+            throw new Error('Matrix is not diagonalizable because it does not have enough linearly independent eigenvectors');
+        }
+
+        eigenData.groups.forEach(function(group){
+            group.basis.forEach(function(vector){
+                basisVectors.push(vector);
+                diagonalEntries.push(group.value);
+            });
+        });
+
+        sMatrix = matrixData.map(function(_, rowIndex){
+            return basisVectors.map(function(vector){
+                return vector[rowIndex];
+            });
+        });
+        lambdaMatrix = normalizeComputedMatrix(math.diag(diagonalEntries));
+        inverseMatrix = normalizeComputedMatrix(math.inv(sMatrix));
+        reconstructed = normalizeComputedMatrix(math.multiply(math.multiply(sMatrix, lambdaMatrix), inverseMatrix));
+
+        return {
+            eigenData: eigenData,
+            basisVectors: basisVectors,
+            diagonalEntries: diagonalEntries,
+            sMatrix: sMatrix,
+            lambdaMatrix: lambdaMatrix,
+            inverseMatrix: inverseMatrix,
+            reconstructed: reconstructed
+        };
+    }
+
     function getCommandMatch(expr) {
         var match = expr.match(/^\s*([A-Za-z_]\w*)\s*\((.*)\)\s*$/);
         var name;
 
         if (!match) return null;
         name = match[1].toLowerCase();
-        if (['col', 'row', 'null', 'rref', 'solve_rref', 'lu', 'solve_lu', 'cr', 'solve_cr'].indexOf(name) < 0) {
+        if (['col', 'row', 'null', 'rref', 'solve_rref', 'lu', 'solve_lu', 'cr', 'solve_cr', 'diag', 'eig_vals', 'eig_vec', 'solve_eigen', 'solve_diag'].indexOf(name) < 0) {
             return null;
         }
 
@@ -629,6 +1107,9 @@ $(function(){
         var rMatrix;
         var copiedRows;
         var selectedColumns;
+        var eigenData;
+        var diagonalization;
+        var eigenCopyLines;
 
         if (command.name === 'rref') {
             return {
@@ -839,6 +1320,116 @@ $(function(){
                 copyLines: [
                     'C = ' + spanToPlainText(nullBasis, decimals, 'column')
                 ]
+            };
+        }
+
+        if (command.name === 'eig_vals') {
+            eigenData = getEigenspaceData(originalData);
+            return {
+                blocks: [
+                    renderKatexBlock('\\text{Eigenvalues of } ' + exprTex + '\\text{: } ' + buildEigenvalueSummary(eigenData.values, decimals)),
+                    renderKatexBlock('C = ' + vectorToLatex(eigenData.values, decimals, 'row'))
+                ],
+                copyLines: [
+                    'Eigenvalues = ' + formatRowVectorPlainText(eigenData.values, decimals),
+                    'C = ' + formatRowVectorPlainText(eigenData.values, decimals)
+                ]
+            };
+        }
+
+        if (command.name === 'eig_vec') {
+            eigenData = getEigenspaceData(originalData);
+            eigenCopyLines = ['eig_vec(' + argumentInfo.expr + ')'];
+
+            return {
+                blocks: [
+                    renderKatexBlock('\\text{Eigenvalues: } ' + buildEigenvalueSummary(eigenData.values, decimals))
+                ].concat(eigenData.groups.map(function(group){
+                    eigenCopyLines.push('lambda = ' + scalarToPlain(group.value, decimals) + ' -> ' + spanToPlainText(group.basis, decimals, 'column'));
+                    return renderKatexBlock('E_{' + scalarToLatex(group.value, decimals) + '} = \\operatorname{null}\\left(' + matrixToLatex(matrixFromData(group.shiftedMatrix), decimals) + '\\right) = ' + spanToLatex(group.basis, decimals, 'column'));
+                })),
+                copyLines: eigenCopyLines
+            };
+        }
+
+        if (command.name === 'solve_eigen') {
+            eigenData = getEigenspaceData(originalData);
+            eigenCopyLines = ['solve_eigen(' + argumentInfo.expr + ')'];
+            eigenCopyLines.push('A - lambda*I = ' + matrixMinusLambdaToPlain(originalData, decimals, 'lambda'));
+            eigenCopyLines.push('det(A - lambda*I) = ' + formatPolynomialPlain(eigenData.characteristicPolynomial.coefficients, decimals, 'lambda') + ' = 0');
+            eigenCopyLines.push('lambda = ' + eigenData.values.map(function(value){
+                return scalarToPlain(value, decimals);
+            }).join(', '));
+
+            return {
+                blocks: [
+                    renderKatexBlock('\\text{Step 1: Build } ' + exprTex + ' - \\lambda I = ' + matrixMinusLambdaToLatex(originalData, decimals, '\\lambda')),
+                    renderKatexBlock('\\text{Step 2: Characteristic equation } \\det(' + exprTex + ' - \\lambda I) = ' + formatPolynomialLatex(eigenData.characteristicPolynomial.coefficients, decimals, '\\lambda') + ' = 0'),
+                    renderKatexBlock('\\text{Step 3: Solve the characteristic equation } ' + buildEigenvalueSummary(eigenData.values, decimals))
+                ].concat(eigenData.groups.map(function(group){
+                    eigenCopyLines.push('lambda = ' + scalarToPlain(group.value, decimals));
+                    eigenCopyLines.push('A - lambda I = ' + matrixToPlainText(matrixFromData(group.shiftedMatrix), decimals));
+                    eigenCopyLines.push('rref(A - lambda I) = ' + matrixToPlainText(matrixFromData(group.rrefMatrix), decimals));
+                    eigenCopyLines.push('E_lambda = ' + spanToPlainText(group.basis, decimals, 'column'));
+                    return renderKatexBlock('\\text{For } \\lambda = ' + scalarToLatex(group.value, decimals) + ':\\quad ' + exprTex + ' - \\lambda I = ' + matrixToLatex(matrixFromData(group.shiftedMatrix), decimals) + ',\\quad \\operatorname{rref}(' + exprTex + ' - \\lambda I) = ' + matrixToLatex(matrixFromData(group.rrefMatrix), decimals) + ',\\quad E_{\\lambda} = ' + spanToLatex(group.basis, decimals, 'column'));
+                })),
+                copyLines: eigenCopyLines
+            };
+        }
+
+        if (command.name === 'diag') {
+            diagonalization = buildDiagonalizationData(originalData);
+            return {
+                blocks: [
+                    renderKatexBlock(exprTex + ' = S\\Lambda S^{-1}'),
+                    renderKatexBlock('S = ' + matrixToLatex(matrixFromData(diagonalization.sMatrix), decimals)),
+                    renderKatexBlock('\\Lambda = ' + matrixToLatex(matrixFromData(diagonalization.lambdaMatrix), decimals)),
+                    renderKatexBlock('S^{-1} = ' + matrixToLatex(matrixFromData(diagonalization.inverseMatrix), decimals)),
+                    renderKatexBlock('S\\Lambda S^{-1} = ' + matrixToLatex(matrixFromData(diagonalization.reconstructed), decimals))
+                ],
+                copyLines: [
+                    'S = ' + matrixToPlainText(matrixFromData(diagonalization.sMatrix), decimals),
+                    'Lambda = ' + matrixToPlainText(matrixFromData(diagonalization.lambdaMatrix), decimals),
+                    'S^-1 = ' + matrixToPlainText(matrixFromData(diagonalization.inverseMatrix), decimals),
+                    'S*Lambda*S^-1 = ' + matrixToPlainText(matrixFromData(diagonalization.reconstructed), decimals)
+                ]
+            };
+        }
+
+        if (command.name === 'solve_diag') {
+            diagonalization = buildDiagonalizationData(originalData);
+            eigenCopyLines = ['solve_diag(' + argumentInfo.expr + ')'];
+            eigenCopyLines.push('A - lambda*I = ' + matrixMinusLambdaToPlain(originalData, decimals, 'lambda'));
+            eigenCopyLines.push('det(A - lambda*I) = ' + formatPolynomialPlain(diagonalization.eigenData.characteristicPolynomial.coefficients, decimals, 'lambda') + ' = 0');
+            eigenCopyLines.push('lambda = ' + diagonalization.eigenData.values.map(function(value){
+                return scalarToPlain(value, decimals);
+            }).join(', '));
+            diagonalization.eigenData.groups.forEach(function(group){
+                eigenCopyLines.push('lambda = ' + scalarToPlain(group.value, decimals));
+                eigenCopyLines.push('A - lambda I = ' + matrixToPlainText(matrixFromData(group.shiftedMatrix), decimals));
+                eigenCopyLines.push('rref(A - lambda I) = ' + matrixToPlainText(matrixFromData(group.rrefMatrix), decimals));
+                eigenCopyLines.push('E_lambda = ' + spanToPlainText(group.basis, decimals, 'column'));
+            });
+            eigenCopyLines.push('S = ' + matrixToPlainText(matrixFromData(diagonalization.sMatrix), decimals));
+            eigenCopyLines.push('Lambda = ' + matrixToPlainText(matrixFromData(diagonalization.lambdaMatrix), decimals));
+            eigenCopyLines.push('S^-1 = ' + matrixToPlainText(matrixFromData(diagonalization.inverseMatrix), decimals));
+            eigenCopyLines.push(argumentInfo.expr + ' = ' + matrixToPlainText(matrixFromData(diagonalization.sMatrix), decimals) + ' ' + matrixToPlainText(matrixFromData(diagonalization.lambdaMatrix), decimals) + ' ' + matrixToPlainText(matrixFromData(diagonalization.inverseMatrix), decimals));
+
+            return {
+                blocks: [
+                    renderKatexBlock('\\text{Step 1: Build } ' + exprTex + ' - \\lambda I = ' + matrixMinusLambdaToLatex(originalData, decimals, '\\lambda')),
+                    renderKatexBlock('\\text{Step 2: Characteristic equation } \\det(' + exprTex + ' - \\lambda I) = ' + formatPolynomialLatex(diagonalization.eigenData.characteristicPolynomial.coefficients, decimals, '\\lambda') + ' = 0'),
+                    renderKatexBlock('\\text{Step 3: Solve the characteristic equation } ' + buildEigenvalueSummary(diagonalization.eigenData.values, decimals))
+                ].concat(diagonalization.eigenData.groups.map(function(group){
+                    return renderKatexBlock('\\text{Step 4: For } \\lambda = ' + scalarToLatex(group.value, decimals) + ':\\quad ' + exprTex + ' - \\lambda I = ' + matrixToLatex(matrixFromData(group.shiftedMatrix), decimals) + ',\\quad \\operatorname{rref}(' + exprTex + ' - \\lambda I) = ' + matrixToLatex(matrixFromData(group.rrefMatrix), decimals) + ',\\quad E_{\\lambda} = ' + spanToLatex(group.basis, decimals, 'column'));
+                })).concat([
+                    renderKatexBlock('\\text{Step 5: Build } S \\text{ from an eigenbasis}'),
+                    renderKatexBlock('S = ' + matrixToLatex(matrixFromData(diagonalization.sMatrix), decimals)),
+                    renderKatexBlock('\\Lambda = ' + matrixToLatex(matrixFromData(diagonalization.lambdaMatrix), decimals)),
+                    renderKatexBlock('S^{-1} = ' + matrixToLatex(matrixFromData(diagonalization.inverseMatrix), decimals)),
+                    renderKatexBlock(exprTex + ' = S\\Lambda S^{-1} = ' + matrixToLatex(matrixFromData(diagonalization.reconstructed), decimals))
+                ]),
+                copyLines: eigenCopyLines
             };
         }
 
